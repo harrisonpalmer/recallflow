@@ -1,0 +1,100 @@
+const defaultModel = process.env.OPENAI_MODEL || 'gpt-5-mini';
+
+function extractResponseText(response) {
+  if (typeof response.output_text === 'string') return response.output_text;
+  return (response.output || [])
+    .flatMap((item) => item.content || [])
+    .filter((part) => part.type === 'output_text' && part.text)
+    .map((part) => part.text)
+    .join('\n');
+}
+
+function parseCards(text) {
+  const cleaned = text.trim().replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
+  const parsed = JSON.parse(cleaned);
+  const cards = Array.isArray(parsed) ? parsed : parsed.cards;
+  if (!Array.isArray(cards)) return [];
+
+  return cards
+    .slice(0, 24)
+    .map((card) => ({
+      front: String(card.front || '').trim(),
+      back: String(card.back || '').trim(),
+      tags: Array.isArray(card.tags) ? card.tags.map((tag) => String(tag).trim()).filter(Boolean) : ['ai'],
+      type: String(card.type || '').toLowerCase() === 'cloze' ? 'cloze' : 'basic',
+      hint: String(card.hint || '').trim(),
+    }))
+    .filter((card) => card.front && card.back);
+}
+
+export default async function handler(request, response) {
+  response.setHeader('Access-Control-Allow-Origin', process.env.ALLOWED_ORIGIN || '*');
+  response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (request.method === 'OPTIONS') {
+    response.status(204).end();
+    return;
+  }
+
+  if (request.method !== 'POST') {
+    response.status(405).json({ error: 'Method not allowed' });
+    return;
+  }
+
+  if (!process.env.OPENAI_API_KEY) {
+    response.status(500).json({ error: 'OPENAI_API_KEY is not configured on the backend.' });
+    return;
+  }
+
+  let body = {};
+  try {
+    body = typeof request.body === 'string' ? JSON.parse(request.body || '{}') : request.body || {};
+  } catch {
+    response.status(400).json({ error: 'Invalid JSON body' });
+    return;
+  }
+  const { notes = '', mode = 'basic', model = defaultModel } = body;
+  const clippedNotes = String(notes).trim().slice(0, 12000);
+  if (!clippedNotes) {
+    response.status(400).json({ error: 'notes is required' });
+    return;
+  }
+
+  try {
+    const apiResponse = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: model || defaultModel,
+        instructions: [
+          'You turn study notes into high quality flashcards.',
+          'Return only compact JSON matching {"cards":[{"front":"...","back":"...","tags":["..."],"type":"basic|cloze","hint":"..."}]}.',
+          'Create 6 to 14 cards. Keep prompts atomic, answers specific, and hints short.',
+          mode === 'cloze' ? 'Prefer cloze cards using {{c1::answer}} syntax in the front field.' : 'Prefer basic question and answer cards.',
+        ].join(' '),
+        input: clippedNotes,
+        max_output_tokens: 2200,
+      }),
+    });
+
+    if (!apiResponse.ok) {
+      response.status(apiResponse.status).json({ error: await apiResponse.text() });
+      return;
+    }
+
+    const data = await apiResponse.json();
+    const cards = parseCards(extractResponseText(data));
+    if (!cards.length) {
+      response.status(502).json({ error: 'The model response did not contain usable cards.' });
+      return;
+    }
+
+    response.status(200).json({ cards, model: model || defaultModel });
+  } catch (error) {
+    response.status(500).json({ error: 'Failed to generate cards.' });
+  }
+}
