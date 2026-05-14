@@ -53,6 +53,42 @@ function parseCards(text) {
     .filter((card) => card.front && card.back);
 }
 
+async function openAiError(apiResponse) {
+  const fallback = 'RecallFlow AI could not generate cards right now.';
+  const text = await apiResponse.text();
+  try {
+    const parsed = JSON.parse(text);
+    const error = parsed.error || {};
+    if (error.code === 'insufficient_quota') {
+      return {
+        status: 402,
+        body: {
+          code: 'insufficient_quota',
+          error: 'OpenAI billing credits are required before RecallFlow AI can generate cards.',
+        },
+      };
+    }
+    if (error.code === 'invalid_api_key') {
+      return {
+        status: 401,
+        body: {
+          code: 'invalid_api_key',
+          error: 'The configured OpenAI API key was rejected.',
+        },
+      };
+    }
+    return {
+      status: apiResponse.status,
+      body: { code: error.code || 'openai_error', error: error.message || fallback },
+    };
+  } catch {
+    return {
+      status: apiResponse.status,
+      body: { code: 'openai_error', error: text || fallback },
+    };
+  }
+}
+
 export default async function handler(request, response) {
   applyCors(request, response);
 
@@ -106,7 +142,8 @@ export default async function handler(request, response) {
     });
 
     if (!apiResponse.ok) {
-      response.status(apiResponse.status).json({ error: await apiResponse.text() });
+      const failure = await openAiError(apiResponse);
+      response.status(failure.status).json(failure.body);
       return;
     }
 

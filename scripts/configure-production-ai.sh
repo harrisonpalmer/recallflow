@@ -48,6 +48,10 @@ response="$(curl -sS -X POST "$APP_URL/api/generate-cards" \
 
 if echo "$response" | grep -q '"cards"'; then
   echo "RecallFlow AI is live at $APP_URL"
+elif echo "$response" | grep -q 'insufficient_quota'; then
+  echo "The OpenAI key is installed on Vercel, but OpenAI says this account needs billing credits."
+  echo "Add credits in OpenAI Platform Billing, then run this script again to smoke-test it."
+  exit 1
 else
   echo "The deploy finished, but the AI smoke test did not return cards:"
   echo "$response"
