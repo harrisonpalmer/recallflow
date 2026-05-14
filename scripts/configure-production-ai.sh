@@ -17,9 +17,24 @@ fi
 
 read -r -s -p "Paste your OpenAI API key: " OPENAI_API_KEY
 echo
+OPENAI_API_KEY="${OPENAI_API_KEY#\"}"
+OPENAI_API_KEY="${OPENAI_API_KEY%\"}"
+OPENAI_API_KEY="${OPENAI_API_KEY#\'}"
+OPENAI_API_KEY="${OPENAI_API_KEY%\'}"
 
 if [[ -z "$OPENAI_API_KEY" ]]; then
   echo "No API key entered." >&2
+  exit 1
+fi
+
+echo "Checking the key with OpenAI before saving it to Vercel..."
+validation_status="$(curl -sS -o /tmp/recallflow-openai-key-check.json -w '%{http_code}' \
+  https://api.openai.com/v1/models \
+  -H "Authorization: Bearer $OPENAI_API_KEY")"
+
+if [[ "$validation_status" != "200" ]]; then
+  echo "OpenAI rejected that key, so I did not redeploy RecallFlow."
+  echo "Make a fresh Project API key, copy it with the Copy button, then run this script again."
   exit 1
 fi
 
