@@ -1,5 +1,31 @@
 const defaultModel = process.env.OPENAI_MODEL || 'gpt-5-mini';
 
+function allowedOrigins() {
+  return (process.env.ALLOWED_ORIGIN || '*')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+function applyCors(request, response) {
+  const origins = allowedOrigins();
+  const requestOrigin = request.headers.origin;
+  const allowAny = origins.includes('*');
+  const matchedOrigin = requestOrigin && origins.includes(requestOrigin);
+
+  if (allowAny) {
+    response.setHeader('Access-Control-Allow-Origin', '*');
+  } else if (matchedOrigin) {
+    response.setHeader('Access-Control-Allow-Origin', requestOrigin);
+  } else if (!requestOrigin && origins.length) {
+    response.setHeader('Access-Control-Allow-Origin', origins[0]);
+  }
+
+  response.setHeader('Vary', 'Origin');
+  response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
+
 function extractResponseText(response) {
   if (typeof response.output_text === 'string') return response.output_text;
   return (response.output || [])
@@ -28,9 +54,7 @@ function parseCards(text) {
 }
 
 export default async function handler(request, response) {
-  response.setHeader('Access-Control-Allow-Origin', process.env.ALLOWED_ORIGIN || '*');
-  response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  applyCors(request, response);
 
   if (request.method === 'OPTIONS') {
     response.status(204).end();
